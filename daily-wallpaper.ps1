@@ -42,6 +42,45 @@ function Get-WallpaperUrl {
     return "$hostName/?height=9&width=16&token=$encodedToken&darken=60&border=0.1&topOffset=-0.2"
 }
 
+function Get-HeaderValue($Headers, [string]$Name) {
+    if ($null -eq $Headers) {
+        return $null
+    }
+
+    try {
+        return [string]$Headers[$Name]
+    } catch {
+        return $null
+    }
+}
+
+function Get-ResponseErrorDetails($ErrorRecord) {
+    $response = $ErrorRecord.Exception.Response
+    if ($null -eq $response) {
+        return $ErrorRecord.Exception.Message
+    }
+
+    $status = "$([int]$response.StatusCode) $($response.StatusDescription)"
+    $contentType = Get-HeaderValue $response.Headers "Content-Type"
+    $body = ""
+    try {
+        $reader = New-Object IO.StreamReader($response.GetResponseStream())
+        $body = $reader.ReadToEnd().Trim()
+        $reader.Dispose()
+    } catch {
+        $body = "<response body unavailable>"
+    }
+
+    if ($body.Length -gt 300) {
+        $body = $body.Substring(0, 300) + "..."
+    }
+    if ([string]::IsNullOrWhiteSpace($body)) {
+        $body = "<empty response body>"
+    }
+
+    return "HTTP $status; Content-Type: $contentType; Body: $body"
+}
+
 function Set-DesktopWallpaper([string]$Path) {
     if (-not ("ImmichWallpaper.NativeMethods" -as [type])) {
         Add-Type @"
@@ -111,7 +150,15 @@ try {
     $outputPath = Join-Path $DataDirectory "wallpaper-$(Get-Date -Format yyyy-MM-dd).png"
     try {
         Write-Log "Starting $Reason refresh."
-        Invoke-WebRequest -Uri (Get-WallpaperUrl) -OutFile $temporaryPath -UseBasicParsing
+        $wallpaperUrl = Get-WallpaperUrl
+        $responseHeaders = $null
+        try {
+            Invoke-WebRequest -Uri $wallpaperUrl -OutFile $temporaryPath `
+                -ResponseHeadersVariable responseHeaders -UseBasicParsing
+        } catch {
+            throw "Wallpaper request failed. $(Get-ResponseErrorDetails $_)"
+        }
+
         $bytes = [IO.File]::ReadAllBytes($temporaryPath)
         $pngHeader = @(137, 80, 78, 71, 13, 10, 26, 10)
         $validPng = $bytes.Length -ge $pngHeader.Count
@@ -119,7 +166,10 @@ try {
             $validPng = $bytes[$i] -eq $pngHeader[$i]
         }
         if (-not $validPng) {
-            throw "The server response was not a PNG image."
+            $contentType = Get-HeaderValue $responseHeaders "Content-Type"
+            $previewLength = [Math]::Min(120, $bytes.Length)
+            $preview = [Text.Encoding]::UTF8.GetString($bytes, 0, $previewLength).Replace("`r", " ").Replace("`n", " ").Trim()
+            throw "The server response was not a PNG image. Content-Type: $contentType; Size: $($bytes.Length) bytes; Preview: $preview"
         }
 
         Move-Item -LiteralPath $temporaryPath -Destination $outputPath -Force
