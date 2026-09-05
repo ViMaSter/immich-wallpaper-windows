@@ -55,9 +55,16 @@ function Get-HeaderValue($Headers, [string]$Name) {
 }
 
 function Get-ResponseErrorDetails($ErrorRecord) {
-    $response = $ErrorRecord.Exception.Response
+    $response = $null
+    if ($ErrorRecord.Exception.PSObject.Properties.Name -contains "Response") {
+        $response = $ErrorRecord.Exception.Response
+    }
     if ($null -eq $response) {
-        return $ErrorRecord.Exception.Message
+        $message = $ErrorRecord.Exception.Message
+        if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
+            $message = "$message; Body: $($ErrorRecord.ErrorDetails.Message)"
+        }
+        return $message
     }
 
     $status = "$([int]$response.StatusCode) $($response.StatusDescription)"
