@@ -160,8 +160,9 @@ try {
         $wallpaperUrl = Get-WallpaperUrl
         $responseHeaders = $null
         try {
-            Invoke-WebRequest -Uri $wallpaperUrl -OutFile $temporaryPath `
-                -ResponseHeadersVariable responseHeaders -UseBasicParsing
+            $webResponse = Invoke-WebRequest -Uri $wallpaperUrl -OutFile $temporaryPath `
+                -PassThru -UseBasicParsing
+            $responseHeaders = $webResponse.Headers
         } catch {
             throw "Wallpaper request failed. $(Get-ResponseErrorDetails $_)"
         }
