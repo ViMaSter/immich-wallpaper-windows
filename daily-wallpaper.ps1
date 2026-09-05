@@ -54,7 +54,11 @@ function Get-HeaderValue($Headers, [string]$Name) {
     }
 }
 
-function Get-ResponseErrorDetails($ErrorRecord) {
+function Get-RedactedUrl([string]$Url) {
+    return $Url -replace "(?i)([?&]token=)[^&]*", '$1[REDACTED]'
+}
+
+function Get-ResponseErrorDetails($ErrorRecord, [string]$RequestUrl) {
     $response = $null
     if ($ErrorRecord.Exception.PSObject.Properties.Name -contains "Response") {
         $response = $ErrorRecord.Exception.Response
@@ -64,7 +68,7 @@ function Get-ResponseErrorDetails($ErrorRecord) {
         if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
             $message = "$message; Body: $($ErrorRecord.ErrorDetails.Message)"
         }
-        return $message
+        return "Request: $(Get-RedactedUrl $RequestUrl); $message"
     }
 
     $status = "$([int]$response.StatusCode) $($response.StatusDescription)"
@@ -78,14 +82,11 @@ function Get-ResponseErrorDetails($ErrorRecord) {
         $body = "<response body unavailable>"
     }
 
-    if ($body.Length -gt 300) {
-        $body = $body.Substring(0, 300) + "..."
-    }
     if ([string]::IsNullOrWhiteSpace($body)) {
         $body = "<empty response body>"
     }
 
-    return "HTTP $status; Content-Type: $contentType; Body: $body"
+    return "Request: $(Get-RedactedUrl $RequestUrl); HTTP $status; Content-Type: $contentType; Full response body:`n$body"
 }
 
 function Set-DesktopWallpaper([string]$Path) {
@@ -164,7 +165,7 @@ try {
                 -PassThru -UseBasicParsing
             $responseHeaders = $webResponse.Headers
         } catch {
-            throw "Wallpaper request failed. $(Get-ResponseErrorDetails $_)"
+            throw "Wallpaper request failed. $(Get-ResponseErrorDetails $_ $wallpaperUrl)"
         }
 
         $bytes = [IO.File]::ReadAllBytes($temporaryPath)
@@ -175,9 +176,11 @@ try {
         }
         if (-not $validPng) {
             $contentType = Get-HeaderValue $responseHeaders "Content-Type"
-            $previewLength = [Math]::Min(120, $bytes.Length)
-            $preview = [Text.Encoding]::UTF8.GetString($bytes, 0, $previewLength).Replace("`r", " ").Replace("`n", " ").Trim()
-            throw "The server response was not a PNG image. Content-Type: $contentType; Size: $($bytes.Length) bytes; Preview: $preview"
+            $responseBody = [Text.Encoding]::UTF8.GetString($bytes)
+            if ([string]::IsNullOrWhiteSpace($responseBody)) {
+                $responseBody = "<empty response body>"
+            }
+            throw "The server response was not a PNG image. Request: $(Get-RedactedUrl $wallpaperUrl); Content-Type: $contentType; Size: $($bytes.Length) bytes; Full response body:`n$responseBody"
         }
 
         Move-Item -LiteralPath $temporaryPath -Destination $outputPath -Force
